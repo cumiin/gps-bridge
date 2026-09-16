@@ -17,6 +17,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.gpsbridge.common.GpsData
@@ -27,6 +28,9 @@ import com.gpsbridge.common.Protocol
  *
  * 네트워크 I/O 는 반드시 메인 스레드 밖에서 해야 하므로(NetworkOnMainThreadException),
  * 전용 HandlerThread 를 만들어 소켓 열기·전송·위치 콜백을 모두 그 스레드에서 처리한다.
+ *
+ * 핫스팟이 아직 안 켜졌거나 태블릿이 준비되지 않았어도 서비스를 종료하지 않고
+ * 연결될 때까지 주기적으로 재시도한다.
  */
 class GpsSenderService : Service(), LocationListener {
 
@@ -36,7 +40,14 @@ class GpsSenderService : Service(), LocationListener {
 
     private var udp: UdpSender? = null
     private var bt: BluetoothSender? = null
+
     private var mode: String = MODE_WIFI
+    private var host: String = Protocol.DEFAULT_BROADCAST
+    private var port: Int = Protocol.DEFAULT_UDP_PORT
+    private var btMac: String? = null
+
+    @Volatile private var transportReady = false
+    private var lastRetryAt = 0L
     private var count = 0
 
     override fun onCreate() {
@@ -50,38 +61,50 @@ class GpsSenderService : Service(), LocationListener {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         mode = intent?.getStringExtra(EXTRA_MODE) ?: MODE_WIFI
-        val host = intent?.getStringExtra(EXTRA_HOST) ?: Protocol.DEFAULT_BROADCAST
+        host = intent?.getStringExtra(EXTRA_HOST) ?: Protocol.DEFAULT_BROADCAST
         val rawPort = intent?.getIntExtra(EXTRA_PORT, Protocol.DEFAULT_UDP_PORT)
             ?: Protocol.DEFAULT_UDP_PORT
-        val port = if (rawPort in 1..65535) rawPort else Protocol.DEFAULT_UDP_PORT
-        val mac = intent?.getStringExtra(EXTRA_BT_MAC)
+        port = if (rawPort in 1..65535) rawPort else Protocol.DEFAULT_UDP_PORT
+        btMac = intent?.getStringExtra(EXTRA_BT_MAC)
 
-        // 소켓 열기와 위치 구독을 모두 IO 스레드에서 수행
         ioHandler?.post {
-            closeTransports()
-            try {
-                when (mode) {
-                    MODE_BT -> {
-                        if (mac == null) throw IllegalStateException("블루투스 기기를 선택하세요")
-                        val adapter =
-                            (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
-                                ?: throw IllegalStateException("블루투스를 지원하지 않습니다")
-                        val device = adapter.getRemoteDevice(mac)
-                        bt = BluetoothSender(device).also { it.open() }
-                        notifyStatus("블루투스 연결됨: $mac")
-                    }
-                    else -> {
-                        udp = UdpSender(host, port).also { it.open() }
-                        notifyStatus("WiFi 전송 준비: $host:$port")
-                    }
-                }
-                startLocationUpdates()
-            } catch (e: Exception) {
-                emit("오류: ${e.javaClass.simpleName}: ${e.message ?: "(메시지 없음)"}")
-                stopSelf()
-            }
+            startLocationUpdates()
+            openTransport()
         }
         return START_STICKY
+    }
+
+    /** 전송 통로를 연다. 실패해도 서비스는 살려두고 나중에 다시 시도한다. */
+    private fun openTransport() {
+        closeTransports()
+        try {
+            when (mode) {
+                MODE_BT -> {
+                    val mac = btMac ?: throw IllegalStateException("블루투스 기기를 선택하세요")
+                    val adapter =
+                        (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
+                            ?: throw IllegalStateException("블루투스를 지원하지 않습니다")
+                    bt = BluetoothSender(adapter.getRemoteDevice(mac)).also { it.open() }
+                    notifyStatus("블루투스 연결됨: $mac")
+                }
+                else -> {
+                    udp = UdpSender(host, port).also { it.open() }
+                    notifyStatus("WiFi 전송 준비: $host:$port")
+                }
+            }
+            transportReady = true
+        } catch (e: Exception) {
+            transportReady = false
+            emit("연결 대기 중… (${e.javaClass.simpleName}) 자동 재시도합니다")
+        }
+    }
+
+    /** 3초에 한 번까지만 재연결을 시도한다. */
+    private fun scheduleRetry() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastRetryAt < RETRY_INTERVAL_MS) return
+        lastRetryAt = now
+        ioHandler?.post { openTransport() }
     }
 
     /** IO 스레드에서 호출. 위치 콜백도 같은 스레드로 받아 전송이 메인 스레드를 타지 않게 한다. */
@@ -122,6 +145,13 @@ class GpsSenderService : Service(), LocationListener {
             bearing = if (location.hasBearing()) location.bearing else 0f,
             time = System.currentTimeMillis()
         )
+
+        if (!transportReady) {
+            emit("연결 대기 중… 핫스팟/WiFi 를 켜면 자동으로 전송됩니다")
+            scheduleRetry()
+            return
+        }
+
         try {
             when (mode) {
                 MODE_BT -> bt?.send(data.encode())
@@ -130,7 +160,9 @@ class GpsSenderService : Service(), LocationListener {
             count++
             emit("전송 중 ($count)  %.6f, %.6f".format(location.latitude, location.longitude))
         } catch (e: Exception) {
-            emit("전송 오류: ${e.javaClass.simpleName}: ${e.message ?: "(메시지 없음)"}")
+            transportReady = false
+            emit("전송 끊김 (${e.javaClass.simpleName}) — 자동 재연결 중")
+            scheduleRetry()
         }
     }
 
@@ -195,6 +227,8 @@ class GpsSenderService : Service(), LocationListener {
         const val EXTRA_HOST = "host"
         const val EXTRA_PORT = "port"
         const val EXTRA_BT_MAC = "bt_mac"
+
+        private const val RETRY_INTERVAL_MS = 3000L
 
         /** MainActivity 가 상태 표시를 위해 구독 */
         var statusListener: ((String) -> Unit)? = null

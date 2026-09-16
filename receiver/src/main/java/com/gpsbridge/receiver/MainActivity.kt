@@ -22,6 +22,7 @@ import java.net.NetworkInterface
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
+    private lateinit var prefs: Prefs
     private var testInjector: MockLocationInjector? = null
     private val testHandler = Handler(Looper.getMainLooper())
 
@@ -39,6 +40,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        prefs = Prefs(this)
 
         // 어떤 빌드가 설치됐는지 화면에서 바로 확인할 수 있게 버전 표시
         val ver = try {
@@ -70,6 +72,35 @@ class MainActivity : AppCompatActivity() {
         GpsReceiverService.statusListener = { msg ->
             runOnUiThread { binding.txtStatus.text = msg }
         }
+
+        restoreSettings()
+
+        // 자동 시작이 켜져 있고 권한이 이미 있으면 바로 시작
+        val hasPerm = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        if (prefs.autoStart && hasPerm) {
+            startService()
+        }
+    }
+
+    private fun restoreSettings() {
+        binding.editPort.setText(prefs.port.toString())
+        binding.chkAutoStart.isChecked = prefs.autoStart
+        if (prefs.mode == GpsReceiverService.MODE_BT) {
+            binding.radioBt.isChecked = true
+            binding.wifiBox.visibility = View.GONE
+        }
+    }
+
+    private fun saveSettings() {
+        prefs.autoStart = binding.chkAutoStart.isChecked
+        prefs.mode = if (binding.radioBt.isChecked) {
+            GpsReceiverService.MODE_BT
+        } else {
+            GpsReceiverService.MODE_WIFI
+        }
+        prefs.port = binding.editPort.text.toString().toIntOrNull() ?: Protocol.DEFAULT_UDP_PORT
     }
 
     override fun onDestroy() {
@@ -164,14 +195,14 @@ class MainActivity : AppCompatActivity() {
         testInjector?.stop()
         testInjector = null
 
+        saveSettings()
+
         val intent = Intent(this, GpsReceiverService::class.java)
         if (binding.radioBt.isChecked) {
             intent.putExtra(GpsReceiverService.EXTRA_MODE, GpsReceiverService.MODE_BT)
         } else {
-            val port = binding.editPort.text.toString().toIntOrNull()
-                ?: Protocol.DEFAULT_UDP_PORT
             intent.putExtra(GpsReceiverService.EXTRA_MODE, GpsReceiverService.MODE_WIFI)
-            intent.putExtra(GpsReceiverService.EXTRA_PORT, port)
+            intent.putExtra(GpsReceiverService.EXTRA_PORT, prefs.port)
         }
         ContextCompat.startForegroundService(this, intent)
         binding.btnStart.isEnabled = false

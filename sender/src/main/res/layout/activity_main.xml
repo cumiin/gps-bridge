@@ -93,6 +93,13 @@
                 android:layout_height="wrap_content" />
         </LinearLayout>
 
+        <CheckBox
+            android:id="@+id/chkAutoStart"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="앱을 열면 자동으로 시작 (설정 기억)" />
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

@@ -21,13 +21,13 @@ import com.gpsbridge.sender.databinding.ActivityMainBinding
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
+    private lateinit var prefs: Prefs
     private var btDevices: List<BluetoothDevice> = emptyList()
 
     private val permLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
-        val granted = result[Manifest.permission.ACCESS_FINE_LOCATION] == true
-        if (granted) {
+        if (result[Manifest.permission.ACCESS_FINE_LOCATION] == true) {
             startService()
         } else {
             Toast.makeText(this, "위치 권한이 필요합니다", Toast.LENGTH_LONG).show()
@@ -38,14 +38,16 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        prefs = Prefs(this)
 
-        // 어떤 빌드가 설치됐는지 화면에서 바로 확인할 수 있게 버전 표시
         val ver = try {
             packageManager.getPackageInfo(packageName, 0).versionName
         } catch (e: Exception) {
             "?"
         }
         binding.txtTitle.text = "GPS Bridge · 송신 (폰)  v$ver"
+
+        restoreSettings()
 
         binding.modeGroup.setOnCheckedChangeListener { _, checkedId ->
             val bt = checkedId == R.id.radioBt
@@ -60,12 +62,44 @@ class MainActivity : AppCompatActivity() {
         GpsSenderService.statusListener = { msg ->
             runOnUiThread { binding.txtStatus.text = msg }
         }
+
+        // 자동 시작이 켜져 있고 권한이 이미 있으면 바로 시작
+        if (prefs.autoStart && hasRequiredPerms()) {
+            startService()
+        }
     }
 
     override fun onDestroy() {
         GpsSenderService.statusListener = null
         super.onDestroy()
     }
+
+    private fun restoreSettings() {
+        binding.editHost.setText(prefs.host)
+        binding.editPort.setText(prefs.port.toString())
+        binding.chkAutoStart.isChecked = prefs.autoStart
+        if (prefs.mode == GpsSenderService.MODE_BT) {
+            binding.radioBt.isChecked = true
+            binding.wifiBox.visibility = View.GONE
+            binding.btBox.visibility = View.VISIBLE
+            loadBondedDevices()
+        }
+    }
+
+    private fun saveSettings() {
+        prefs.autoStart = binding.chkAutoStart.isChecked
+        prefs.mode = if (binding.radioBt.isChecked) {
+            GpsSenderService.MODE_BT
+        } else {
+            GpsSenderService.MODE_WIFI
+        }
+        prefs.host = binding.editHost.text.toString().ifBlank { Protocol.DEFAULT_BROADCAST }
+        prefs.port = binding.editPort.text.toString().toIntOrNull() ?: Protocol.DEFAULT_UDP_PORT
+    }
+
+    private fun hasRequiredPerms(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
 
     private fun requestPermsAndStart() {
         val perms = mutableListOf(
@@ -85,21 +119,27 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startService() {
+        saveSettings()
+
         val intent = Intent(this, GpsSenderService::class.java)
         if (binding.radioBt.isChecked) {
             val pos = binding.spinnerBt.selectedItemPosition
-            if (pos < 0 || pos >= btDevices.size) {
+            val mac = if (pos >= 0 && pos < btDevices.size) {
+                btDevices[pos].address
+            } else {
+                prefs.btMac.ifBlank { null }
+            }
+            if (mac == null) {
                 Toast.makeText(this, "블루투스 기기를 선택하세요", Toast.LENGTH_SHORT).show()
                 return
             }
+            prefs.btMac = mac
             intent.putExtra(GpsSenderService.EXTRA_MODE, GpsSenderService.MODE_BT)
-            intent.putExtra(GpsSenderService.EXTRA_BT_MAC, btDevices[pos].address)
+            intent.putExtra(GpsSenderService.EXTRA_BT_MAC, mac)
         } else {
-            val host = binding.editHost.text.toString().ifBlank { Protocol.DEFAULT_BROADCAST }
-            val port = binding.editPort.text.toString().toIntOrNull() ?: Protocol.DEFAULT_UDP_PORT
             intent.putExtra(GpsSenderService.EXTRA_MODE, GpsSenderService.MODE_WIFI)
-            intent.putExtra(GpsSenderService.EXTRA_HOST, host)
-            intent.putExtra(GpsSenderService.EXTRA_PORT, port)
+            intent.putExtra(GpsSenderService.EXTRA_HOST, prefs.host)
+            intent.putExtra(GpsSenderService.EXTRA_PORT, prefs.port)
         }
         ContextCompat.startForegroundService(this, intent)
         binding.btnStart.isEnabled = false
@@ -132,6 +172,10 @@ class MainActivity : AppCompatActivity() {
         binding.spinnerBt.adapter = ArrayAdapter(
             this, android.R.layout.simple_spinner_dropdown_item, names
         )
+        // 저장된 기기를 자동 선택
+        val savedIdx = btDevices.indexOfFirst { it.address == prefs.btMac }
+        if (savedIdx >= 0) binding.spinnerBt.setSelection(savedIdx)
+
         if (btDevices.isEmpty()) {
             Toast.makeText(this, "페어링된 기기가 없습니다", Toast.LENGTH_LONG).show()
         }
