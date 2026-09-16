@@ -21,13 +21,16 @@ class UdpReceiver(
         running = true
         thread = Thread {
             try {
-                val s = DatagramSocket(null).apply {
-                    reuseAddress = true
-                    broadcast = true
-                    soTimeout = 1000
-                    bind(java.net.InetSocketAddress(port))
+                if (port !in 1..65535) {
+                    onError("잘못된 포트 값: $port")
+                    return@Thread
                 }
+                // 포트를 직접 지정해 바인딩한다(InetSocketAddress 경유 시 포트 오류가 났던 이력 있음).
+                val s = DatagramSocket(port)
+                s.broadcast = true
+                s.soTimeout = 1000
                 socket = s
+
                 val buf = ByteArray(1024)
                 while (running) {
                     try {
@@ -40,7 +43,9 @@ class UdpReceiver(
                     }
                 }
             } catch (e: Exception) {
-                if (running) onError("${e.javaClass.simpleName}: ${e.message ?: "(메시지 없음)"}")
+                if (running) {
+                    onError("${e.javaClass.simpleName}: ${e.message ?: "(메시지 없음)"} [포트 $port]")
+                }
             } finally {
                 try { socket?.close() } catch (_: Exception) {}
             }

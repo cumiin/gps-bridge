@@ -39,6 +39,14 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // 어떤 빌드가 설치됐는지 화면에서 바로 확인할 수 있게 버전 표시
+        val ver = try {
+            packageManager.getPackageInfo(packageName, 0).versionName
+        } catch (e: Exception) {
+            "?"
+        }
+        binding.txtTitle.text = "GPS Bridge · 송신 (폰)  v$ver"
+
         binding.modeGroup.setOnCheckedChangeListener { _, checkedId ->
             val bt = checkedId == R.id.radioBt
             binding.wifiBox.visibility = if (bt) View.GONE else View.VISIBLE
