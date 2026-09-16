@@ -33,6 +33,29 @@ APK만 뽑으려면: **Build → Build Bundle(s)/APK(s) → Build APK(s)**
 
 ---
 
+## 1-2. GitHub Actions 로 APK 자동 빌드 (안드로이드 스튜디오 없이)
+
+저장소에 푸시하면 `.github/workflows/build.yml` 이 자동으로 APK 두 개를 만들어
+**Actions → 해당 실행 → Artifacts** 에 올려둡니다.
+
+- `sender-phone-apk` → 폰
+- `receiver-tablet-apk` → 태블릿
+
+### 덮어쓰기 업데이트(재설치 불필요) 설정
+
+기본 디버그 서명은 빌드마다 키가 달라져서 기존 앱 위에 설치가 막힙니다.
+저장소 시크릿 **`KEYSTORE_PASSWORD`** 를 등록해두면, CI 가 최초 1회
+`keystore/gpsbridge.jks` 를 만들어 저장소에 보관하고 이후 모든 빌드가 같은 키로 서명합니다.
+→ 이후로는 **삭제 없이 덮어쓰기 설치**만으로 업데이트됩니다.
+
+> 시크릿 등록 위치: 저장소 **Settings → Secrets and variables → Actions → New repository secret**
+> `versionCode` 는 빌드 번호로 자동 증가합니다.
+
+⚠️ 서명 방식을 처음 적용한 직후에는, 기존에 설치된 앱이 다른 키로 서명돼 있으므로
+**딱 한 번만** 삭제 후 재설치가 필요합니다.
+
+---
+
 ## 2. 태블릿(수신) 준비 — 최초 1회
 
 1. **설정 → 태블릿 정보 → 빌드 번호 7번 연타** → 개발자 모드 활성화
