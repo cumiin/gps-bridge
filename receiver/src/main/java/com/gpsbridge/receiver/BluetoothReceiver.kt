@@ -43,7 +43,9 @@ class BluetoothReceiver(
                     GpsData.decode(line)?.let(onData)
                 }
             } catch (e: Exception) {
-                if (running) onStatus("블루투스 오류: ${e.message}")
+                if (running) onStatus(
+                    "블루투스 오류: ${e.javaClass.simpleName}: ${e.message ?: "(메시지 없음)"}"
+                )
             } finally {
                 try { client?.close() } catch (_: Exception) {}
                 try { server?.close() } catch (_: Exception) {}

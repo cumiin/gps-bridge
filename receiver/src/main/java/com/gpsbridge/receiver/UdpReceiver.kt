@@ -40,7 +40,7 @@ class UdpReceiver(
                     }
                 }
             } catch (e: Exception) {
-                if (running) onError(e.message ?: "UDP 수신 오류")
+                if (running) onError("${e.javaClass.simpleName}: ${e.message ?: "(메시지 없음)"}")
             } finally {
                 try { socket?.close() } catch (_: Exception) {}
             }
