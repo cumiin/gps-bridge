@@ -5,18 +5,25 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import com.gpsbridge.common.GpsData
 import com.gpsbridge.common.Protocol
 import com.gpsbridge.receiver.databinding.ActivityMainBinding
+import java.net.Inet4Address
+import java.net.NetworkInterface
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
+    private var testInjector: MockLocationInjector? = null
+    private val testHandler = Handler(Looper.getMainLooper())
 
     private val permLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -40,6 +47,7 @@ class MainActivity : AppCompatActivity() {
             "?"
         }
         binding.txtTitle.text = "GPS Bridge · 수신 (태블릿)  v$ver"
+        binding.txtIp.text = "이 태블릿 IP: ${localIpv4()}\n(폰 송신 앱의 '대상 IP'에 이 값을 입력)"
 
         binding.btnDev.setOnClickListener {
             try {
@@ -48,6 +56,8 @@ class MainActivity : AppCompatActivity() {
                 startActivity(Intent(Settings.ACTION_SETTINGS))
             }
         }
+
+        binding.btnTest.setOnClickListener { runMockTest() }
 
         binding.modeGroup.setOnCheckedChangeListener { _, checkedId ->
             binding.wifiBox.visibility =
@@ -64,7 +74,71 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         GpsReceiverService.statusListener = null
+        testHandler.removeCallbacksAndMessages(null)
+        testInjector?.stop()
         super.onDestroy()
+    }
+
+    /** 이 기기의 WiFi IPv4 주소 */
+    private fun localIpv4(): String {
+        return try {
+            NetworkInterface.getNetworkInterfaces().toList()
+                .filter { it.isUp && !it.isLoopback }
+                .flatMap { it.inetAddresses.toList() }
+                .filterIsInstance<Inet4Address>()
+                .mapNotNull { it.hostAddress }
+                .firstOrNull { it.isNotBlank() } ?: "확인 불가 (WiFi 연결 확인)"
+        } catch (e: Exception) {
+            "확인 불가"
+        }
+    }
+
+    /**
+     * 네트워크와 무관하게 '모의 위치 주입' 자체가 동작하는지 확인하는 테스트.
+     * 서울시청 좌표를 15초간 계속 주입한다.
+     */
+    private fun runMockTest() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            permLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION))
+            return
+        }
+        testHandler.removeCallbacksAndMessages(null)
+        testInjector?.stop()
+
+        val inj = MockLocationInjector(this)
+        if (!inj.start()) {
+            binding.txtStatus.text =
+                "❌ 모의 위치 앱으로 지정되지 않았습니다.\n개발자 옵션 → '모의 위치 앱'에서 이 앱을 선택하세요."
+            return
+        }
+        testInjector = inj
+
+        val seoulCityHall = GpsData(
+            lat = 37.566535, lon = 126.977969, alt = 38.0,
+            accuracy = 3f, speed = 0f, bearing = 0f,
+            time = System.currentTimeMillis()
+        )
+
+        var ticks = 0
+        val tick = object : Runnable {
+            override fun run() {
+                inj.push(seoulCityHall)
+                ticks++
+                binding.txtStatus.text =
+                    "🧪 테스트 주입 중 ($ticks/15초)  37.566535, 126.977969\n" +
+                    "지금 지도 앱에서 서울시청으로 보이면 모의 위치 정상입니다."
+                if (ticks < 15) {
+                    testHandler.postDelayed(this, 1000)
+                } else {
+                    inj.stop()
+                    testInjector = null
+                    binding.txtStatus.text = "🧪 테스트 종료. 지도에 서울시청이 떴다면 모의 위치는 정상입니다."
+                }
+            }
+        }
+        testHandler.post(tick)
     }
 
     private fun requestPermsAndStart() {
@@ -85,6 +159,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startService() {
+        // 테스트 주입이 돌고 있으면 충돌하지 않게 정리
+        testHandler.removeCallbacksAndMessages(null)
+        testInjector?.stop()
+        testInjector = null
+
         val intent = Intent(this, GpsReceiverService::class.java)
         if (binding.radioBt.isChecked) {
             intent.putExtra(GpsReceiverService.EXTRA_MODE, GpsReceiverService.MODE_BT)

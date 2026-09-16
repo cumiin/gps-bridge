@@ -21,8 +21,17 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="① 아래 '개발자 옵션 열기' → '모의 위치 앱'을 이 앱으로 지정\n② 방식 선택 후 시작"
+            android:text="① '개발자 옵션 열기' → '모의 위치 앱'을 이 앱으로 지정\n② 방식 선택 후 시작"
             android:textSize="13sp"
+            android:paddingBottom="12dp" />
+
+        <TextView
+            android:id="@+id/txtIp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="이 태블릿 IP: 확인 중…"
+            android:textSize="15sp"
+            android:textStyle="bold"
             android:paddingBottom="12dp" />
 
         <Button
@@ -30,6 +39,13 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="개발자 옵션 열기" />
+
+        <Button
+            android:id="@+id/btnTest"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="모의 위치 테스트 (서울시청 15초)" />
 
         <RadioGroup
             android:id="@+id/modeGroup"
