@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # 최초 1회 서명키를 저장소에 커밋하기 위해 필요
     steps:
       - name: 소스 체크아웃
         uses: actions/checkout@v4
@@ -17,6 +19,33 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+
+      - name: 고정 서명키 준비 (최초 1회만 생성 후 저장소에 보관)
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "::warning::KEYSTORE_PASSWORD 시크릿이 없어 고정 서명을 건너뜁니다. 설치 시 기존 앱 삭제가 필요합니다."
+            exit 0
+          fi
+          if [ -f keystore/gpsbridge.jks ]; then
+            echo "기존 서명키 사용"
+          else
+            echo "서명키가 없어 새로 생성합니다"
+            mkdir -p keystore
+            keytool -genkeypair -v \
+              -keystore keystore/gpsbridge.jks \
+              -storetype PKCS12 \
+              -storepass "$KEYSTORE_PASSWORD" -keypass "$KEYSTORE_PASSWORD" \
+              -alias gpsbridge \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=GpsBridge, OU=Dev, O=GpsBridge, L=Seoul, ST=Seoul, C=KR"
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add -f keystore/gpsbridge.jks
+            git commit -m "chore: 고정 서명키 생성 (덮어쓰기 업데이트 지원)"
+            git push
+          fi
 
       - name: 안드로이드 SDK 설정
         uses: android-actions/setup-android@v3
@@ -29,6 +58,8 @@ jobs:
           gradle-version: '8.7'
 
       - name: 디버그 APK 빌드
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: gradle :sender:assembleDebug :receiver:assembleDebug --no-daemon
 
       - name: 송신 앱(폰) APK 업로드
