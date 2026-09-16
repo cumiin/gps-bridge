@@ -53,8 +53,9 @@ class GpsReceiverService : Service() {
                     ).also { it.start() }
                 }
                 else -> {
-                    val port = intent?.getIntExtra(EXTRA_PORT, Protocol.DEFAULT_UDP_PORT)
+                    val raw = intent?.getIntExtra(EXTRA_PORT, Protocol.DEFAULT_UDP_PORT)
                         ?: Protocol.DEFAULT_UDP_PORT
+                    val port = if (raw in 1..65535) raw else Protocol.DEFAULT_UDP_PORT
                     udp = UdpReceiver(
                         port,
                         onData = { onData(it) },
@@ -64,7 +65,7 @@ class GpsReceiverService : Service() {
                 }
             }
         } catch (e: Exception) {
-            emit("오류: ${e.message}")
+            emit("오류: ${e.javaClass.simpleName}: ${e.message ?: "(메시지 없음)"}")
             stopSelf()
         }
         return START_STICKY

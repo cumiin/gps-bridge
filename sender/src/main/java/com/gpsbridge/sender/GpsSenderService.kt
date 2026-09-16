@@ -62,7 +62,7 @@ class GpsSenderService : Service(), LocationListener {
             }
             startLocationUpdates()
         } catch (e: Exception) {
-            emit("오류: ${e.message}")
+            emit("오류: ${e.javaClass.simpleName}: ${e.message ?: "(메시지 없음)"}")
             stopSelf()
         }
         return START_STICKY
@@ -111,7 +111,7 @@ class GpsSenderService : Service(), LocationListener {
             count++
             emit("전송 중 ($count)  %.6f, %.6f".format(location.latitude, location.longitude))
         } catch (e: Exception) {
-            emit("전송 오류: ${e.message}")
+            emit("전송 오류: ${e.javaClass.simpleName}: ${e.message ?: "(메시지 없음)"}")
         }
     }
 
